@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pending Qty Report</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+body{font-family:Arial;background:#f4f6f9;padding:20px}
+h2{text-align:center}
+.controls{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0}
+input,button{padding:8px}
+table{border-collapse:collapse;width:100%;background:#fff}
+th,td{border:1px solid #ccc;padding:8px;text-align:center}
+th{background:#1976d2;color:#fff}
+.filter-row input{width:95%;padding:5px}
+</style>
+</head>
+<body>
+
+<h2>Partwise vs Supplierwise Pending Qty Report</h2>
+
+<div class="controls">
+<input type="file" id="fileInput" accept=".xlsx,.xls" />
+<input type="text" id="globalSearch" placeholder="Search all columns..." />
+<button onclick="exportExcel()">Export Excel</button>
+</div>
+
+<table id="reportTable">
+<thead>
+<tr>
+<th>Part Number</th>
+<th>Part Name</th>
+<th>Supplier</th>
+<th>Supplier Name</th>
+<th>Total Shipped Qty</th>
+<th>Total Arrived Qty</th>
+<th>Pending Qty</th>
+</tr>
+<tr class="filter-row">
+<th><input onkeyup="applyFilters()" data-col="0"></th>
+<th><input onkeyup="applyFilters()" data-col="1"></th>
+<th><input onkeyup="applyFilters()" data-col="2"></th>
+<th><input onkeyup="applyFilters()" data-col="3"></th>
+<th><input onkeyup="applyFilters()" data-col="4"></th>
+<th><input onkeyup="applyFilters()" data-col="5"></th>
+<th><input onkeyup="applyFilters()" data-col="6"></th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+
+<script>
+let finalData = [];
+
+document.getElementById('fileInput').addEventListener('change', handleFile);
+document.getElementById('globalSearch').addEventListener('keyup', applyFilters);
+
+function handleFile(e) {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+
+    reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+        processData(jsonData);
+    };
+
+    reader.readAsArrayBuffer(file);
+}
+
+function processData(data) {
+    let result = {};
+
+    data.forEach(row => {
+        let part = row['PartNumber'];
+        let partName = row['PartName'];
+        let supplier = row['Supplier'];
+        let supplierName = row['SupplierName'];
+
+        let shipped = Number(row['ShippedQty'] || 0);
+        let arrived = Number(row['ArrivedQty'] || 0);
+
+        let key = part + '|' + supplier;
+
+        if (!result[key]) {
+            result[key] = {
+                part,
+                partName,
+                supplier,
+                supplierName,
+                shipped: 0,
+                arrived: 0
+            };
+        }
+
+        result[key].shipped += shipped;
+        result[key].arrived += arrived;
+    });
+
+    finalData = Object.values(result).map(item => ({
+        ...item,
+        pending: item.shipped - item.arrived
+    }));
+
+    displayData(finalData);
+}
+
+function displayData(data) {
+    const tbody = document.querySelector('#reportTable tbody');
+    tbody.innerHTML = '';
+
+    data.forEach(item => {
+        let row = `<tr>
+            <td>${item.part}</td>
+            <td>${item.partName}</td>
+            <td>${item.supplier}</td>
+            <td>${item.supplierName}</td>
+            <td>${item.shipped}</td>
+            <td>${item.arrived}</td>
+            <td style="color:red;font-weight:bold">${item.pending}</td>
+        </tr>`;
+
+        tbody.innerHTML += row;
+    });
+}
+
+function applyFilters() {
+    let filtered = [...finalData];
+
+    const global = document.getElementById('globalSearch').value.toLowerCase();
+
+    if (global) {
+        filtered = filtered.filter(row =>
+            Object.values(row).some(val => String(val).toLowerCase().includes(global))
+        );
+    }
+
+    document.querySelectorAll('.filter-row input').forEach(input => {
+        let col = input.dataset.col;
+        let val = input.value.toLowerCase();
+
+        if (val) {
+            filtered = filtered.filter(row => {
+                let fields = [row.part, row.partName, row.supplier, row.supplierName, row.shipped, row.arrived, row.pending];
+                return String(fields[col]).toLowerCase().includes(val);
+            });
+        }
+    });
+
+    displayData(filtered);
+}
+
+function exportExcel() {
+    // Sheet 1: Detailed Data
+    let ws1 = XLSX.utils.json_to_sheet(finalData.map(item => ({
+        PartNumber: item.part,
+        PartName: item.partName,
+        Supplier: item.supplier,
+        SupplierName: item.supplierName,
+        ShippedQty: item.shipped,
+        ArrivedQty: item.arrived,
+        PendingQty: item.pending
+    })));
+
+    // Sheet 2: Pivot (PartNumber+PartName vs SupplierName)
+    let pivot = {};
+    let suppliers = new Set();
+
+    finalData.forEach(item => {
+        let partKey = item.part + " - " + item.partName;
+
+        suppliers.add(item.supplierName);
+
+        if (!pivot[partKey]) {
+            pivot[partKey] = {};
+        }
+
+        if (!pivot[partKey][item.supplierName]) {
+            pivot[partKey][item.supplierName] = 0;
+        }
+
+        pivot[partKey][item.supplierName] += item.pending;
+    });
+
+    let supplierList = Array.from(suppliers);
+    let pivotArray = [];
+
+    Object.keys(pivot).forEach(part => {
+        let row = { Part: part };
+
+        supplierList.forEach(supp => {
+            row[supp] = pivot[part][supp] || 0;
+        });
+
+        pivotArray.push(row);
+    });
+
+    let ws2 = XLSX.utils.json_to_sheet(pivotArray);
+
+    // Workbook
+    let wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws1, "Detailed Report");
+    XLSX.utils.book_append_sheet(wb, ws2, "Pivot Report");
+
+    let now = new Date();
+    let fileName = `Pending_Report_${now.toLocaleDateString()}_${now.toLocaleTimeString().replace(/:/g,'-')}.xlsx`;
+
+    XLSX.writeFile(wb, fileName);
+}
+</script>
+
+</body>
+</html>
