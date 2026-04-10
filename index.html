@@ -161,7 +161,7 @@ function processData(data) {
 
     data.forEach(r => {
 
-        let key = r.PartNumber + "|" + r.Supplier;
+        let key = r.PartNumber + "-" + r.Supplier;
 
         let shipped = Number(r.ShippedQty || 0);
         let arrived = Number(r.ArrivedQty || 0);
