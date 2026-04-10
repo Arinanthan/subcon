@@ -251,17 +251,18 @@ function showDetails(part, supplier) {
         let shipped = Number(r.ShippedQty || 0);
         let arrived = Number(r.ArrivedQty || 0);
 
-        if (!grouped[po]) {
-            grouped[po] = {
-                PurchaseOrderNumber: po,
-                PartNumber: r.PartNumber,
-                PartName: r.PartName,
-                Supplier: r.Supplier,
-                SupplierName: r.SupplierName,
-                ShippedQty: 0,
-                ArrivedQty: 0
-            };
-        }
+      if (!grouped[po]) {
+    grouped[po] = {
+        PurchaseOrderNumber: po,
+        ManufacturingOrderNumber: r.ManufacturingOrderNumber,
+        PartNumber: r.PartNumber,
+        PartName: r.PartName,
+        Supplier: r.Supplier,
+        SupplierName: r.SupplierName,
+        ShippedQty: 0,
+        ArrivedQty: 0
+    };
+}
 
         grouped[po].ShippedQty += shipped;
         grouped[po].ArrivedQty += arrived;
@@ -321,7 +322,7 @@ function showDetails(part, supplier) {
     totalRow.className = "total-row";
 
     totalRow.innerHTML = `
-        <td colspan="4">GRAND TOTAL</td>
+        <td colspan="5">GRAND TOTAL</td>
         <td></td>
         <td>${totalS}</td>
         <td>${totalA}</td>
