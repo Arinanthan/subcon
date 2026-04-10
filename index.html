@@ -15,8 +15,41 @@ table{border-collapse:collapse;width:100%;background:#fff}
 th,td{border:1px solid #ccc;padding:8px;text-align:center}
 th{background:#1976d2;color:#fff}
 .filter-row input{width:95%;padding:5px}
+tr:hover{background:#e3f2fd;cursor:pointer}
+
+#detailModal{
+display:none;
+position:fixed;
+top:5%;
+left:5%;
+width:90%;
+height:90%;
+background:#fff;
+border:2px solid #333;
+overflow:auto;
+padding:10px;
+z-index:1000;
+}
+
+.close-btn, .download-btn{
+padding:8px 12px;
+border:none;
+cursor:pointer;
+margin-right:10px;
+}
+
+.close-btn{background:red;color:#fff}
+.download-btn{background:green;color:#fff}
+
+/* GRAND TOTAL */
+.total-row{
+background:#222;
+color:#fff;
+font-weight:bold;
+}
 </style>
 </head>
+
 <body>
 
 <h2>Partwise vs Supplierwise Pending Qty Report</h2>
@@ -24,7 +57,6 @@ th{background:#1976d2;color:#fff}
 <div class="controls">
 <input type="file" id="fileInput" accept=".xlsx,.xls" />
 <input type="text" id="globalSearch" placeholder="Search all columns..." />
-<button onclick="exportExcel()">Export Excel</button>
 </div>
 
 <table id="reportTable">
@@ -34,10 +66,11 @@ th{background:#1976d2;color:#fff}
 <th>Part Name</th>
 <th>Supplier</th>
 <th>Supplier Name</th>
-<th>Total Shipped Qty</th>
-<th>Total Arrived Qty</th>
+<th>Shipped Qty</th>
+<th>Arrived Qty</th>
 <th>Pending Qty</th>
 </tr>
+
 <tr class="filter-row">
 <th><input onkeyup="applyFilters()" data-col="0"></th>
 <th><input onkeyup="applyFilters()" data-col="1"></th>
@@ -48,11 +81,29 @@ th{background:#1976d2;color:#fff}
 <th><input onkeyup="applyFilters()" data-col="6"></th>
 </tr>
 </thead>
+
 <tbody></tbody>
 </table>
 
+<!-- DETAIL MODAL -->
+<div id="detailModal">
+
+    <button class="close-btn" onclick="closeModal()">Close</button>
+    <button class="download-btn" onclick="downloadDetail()">⬇ Download This Report</button>
+
+    <h3>Purchase Order Wise Pending View</h3>
+
+    <table id="detailTable">
+        <thead></thead>
+        <tbody></tbody>
+    </table>
+</div>
+
 <script>
+
 let finalData = [];
+let rawData = [];
+let currentDetailData = [];
 
 document.getElementById('fileInput').addEventListener('change', handleFile);
 document.getElementById('globalSearch').addEventListener('keyup', applyFilters);
@@ -64,36 +115,33 @@ function handleFile(e) {
     reader.onload = function(e) {
         const data = new Uint8Array(e.target.result);
         const workbook = XLSX.read(data, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+        const ws = workbook.Sheets[workbook.SheetNames[0]];
+        rawData = XLSX.utils.sheet_to_json(ws);
 
-        processData(jsonData);
+        processData(rawData);
     };
 
     reader.readAsArrayBuffer(file);
 }
 
+/* SUMMARY */
 function processData(data) {
+
     let result = {};
 
-    data.forEach(row => {
-        let part = row['PartNumber'];
-        let partName = row['PartName'];
-        let supplier = row['Supplier'];
-        let supplierName = row['SupplierName'];
+    data.forEach(r => {
 
-        let shipped = Number(row['ShippedQty'] || 0);
-        let arrived = Number(row['ArrivedQty'] || 0);
+        let key = r.PartNumber + "|" + r.Supplier;
 
-        let key = part + '|' + supplier;
+        let shipped = Number(r.ShippedQty || 0);
+        let arrived = Number(r.ArrivedQty || 0);
 
         if (!result[key]) {
             result[key] = {
-                part,
-                partName,
-                supplier,
-                supplierName,
+                part: r.PartNumber,
+                partName: r.PartName,
+                supplier: r.Supplier,
+                supplierName: r.SupplierName,
                 shipped: 0,
                 arrived: 0
             };
@@ -103,51 +151,84 @@ function processData(data) {
         result[key].arrived += arrived;
     });
 
-    finalData = Object.values(result).map(item => ({
-        ...item,
-        pending: item.shipped - item.arrived
+    finalData = Object.values(result).map(x => ({
+        ...x,
+        pending: x.shipped - x.arrived
     }));
 
     displayData(finalData);
 }
 
+/* DISPLAY SUMMARY + GRAND TOTAL */
 function displayData(data) {
-    const tbody = document.querySelector('#reportTable tbody');
-    tbody.innerHTML = '';
 
-    data.forEach(item => {
-        let row = `<tr>
-            <td>${item.part}</td>
-            <td>${item.partName}</td>
-            <td>${item.supplier}</td>
-            <td>${item.supplierName}</td>
-            <td>${item.shipped}</td>
-            <td>${item.arrived}</td>
-            <td style="color:red;font-weight:bold">${item.pending}</td>
-        </tr>`;
+    const tbody = document.querySelector("#reportTable tbody");
+    tbody.innerHTML = "";
 
-        tbody.innerHTML += row;
+    let totalShipped = 0;
+    let totalArrived = 0;
+    let totalPending = 0;
+
+    data.forEach(r => {
+
+        totalShipped += r.shipped;
+        totalArrived += r.arrived;
+        totalPending += r.pending;
+
+        let tr = document.createElement("tr");
+
+        tr.innerHTML = `
+        <td>${r.part}</td>
+        <td>${r.partName}</td>
+        <td>${r.supplier}</td>
+        <td>${r.supplierName}</td>
+        <td>${r.shipped}</td>
+        <td>${r.arrived}</td>
+        <td style="color:red;font-weight:bold">${r.pending}</td>
+        `;
+
+        tr.onclick = () => showDetails(r.part, r.supplier);
+
+        tbody.appendChild(tr);
     });
+
+    // 🔥 GRAND TOTAL ROW
+    let totalRow = document.createElement("tr");
+    totalRow.className = "total-row";
+
+    totalRow.innerHTML = `
+        <td colspan="4">GRAND TOTAL</td>
+        <td>${totalShipped}</td>
+        <td>${totalArrived}</td>
+        <td>${totalPending}</td>
+    `;
+
+    tbody.appendChild(totalRow);
 }
 
+/* FILTER */
 function applyFilters() {
+
     let filtered = [...finalData];
 
     const global = document.getElementById('globalSearch').value.toLowerCase();
 
     if (global) {
         filtered = filtered.filter(row =>
-            Object.values(row).some(val => String(val).toLowerCase().includes(global))
+            Object.values(row).some(val =>
+                String(val).toLowerCase().includes(global)
+            )
         );
     }
 
-    document.querySelectorAll('.filter-row input').forEach(input => {
+    document.querySelectorAll(".filter-row input").forEach(input => {
+
         let col = input.dataset.col;
         let val = input.value.toLowerCase();
 
         if (val) {
             filtered = filtered.filter(row => {
-                let fields = [row.part, row.partName, row.supplier, row.supplierName, row.shipped, row.arrived, row.pending];
+                let fields = [row.part,row.partName,row.supplier,row.supplierName,row.shipped,row.arrived,row.pending];
                 return String(fields[col]).toLowerCase().includes(val);
             });
         }
@@ -156,63 +237,119 @@ function applyFilters() {
     displayData(filtered);
 }
 
-function exportExcel() {
-    // Sheet 1: Detailed Data
-    let ws1 = XLSX.utils.json_to_sheet(finalData.map(item => ({
-        PartNumber: item.part,
-        PartName: item.partName,
-        Supplier: item.supplier,
-        SupplierName: item.supplierName,
-        ShippedQty: item.shipped,
-        ArrivedQty: item.arrived,
-        PendingQty: item.pending
-    })));
+/* DETAIL VIEW */
+function showDetails(part, supplier) {
 
-    // Sheet 2: Pivot (PartNumber+PartName vs SupplierName)
-    let pivot = {};
-    let suppliers = new Set();
+    let grouped = {};
 
-    finalData.forEach(item => {
-        let partKey = item.part + " - " + item.partName;
+    rawData.forEach(r => {
 
-        suppliers.add(item.supplierName);
+        if (r.PartNumber != part || r.Supplier != supplier) return;
 
-        if (!pivot[partKey]) {
-            pivot[partKey] = {};
+        let po = r.PurchaseOrderNumber || "NO_PO";
+
+        let shipped = Number(r.ShippedQty || 0);
+        let arrived = Number(r.ArrivedQty || 0);
+
+        if (!grouped[po]) {
+            grouped[po] = {
+                PurchaseOrderNumber: po,
+                PartNumber: r.PartNumber,
+                PartName: r.PartName,
+                Supplier: r.Supplier,
+                SupplierName: r.SupplierName,
+                ShippedQty: 0,
+                ArrivedQty: 0
+            };
         }
 
-        if (!pivot[partKey][item.supplierName]) {
-            pivot[partKey][item.supplierName] = 0;
-        }
-
-        pivot[partKey][item.supplierName] += item.pending;
+        grouped[po].ShippedQty += shipped;
+        grouped[po].ArrivedQty += arrived;
     });
 
-    let supplierList = Array.from(suppliers);
-    let pivotArray = [];
+    let result = Object.values(grouped).map(x => ({
+        ...x,
+        PendingQty: x.ShippedQty - x.ArrivedQty
+    }))
+    .filter(x => x.PendingQty !== 0);
 
-    Object.keys(pivot).forEach(part => {
-        let row = { Part: part };
+    currentDetailData = result;
 
-        supplierList.forEach(supp => {
-            row[supp] = pivot[part][supp] || 0;
+    const thead = document.querySelector("#detailTable thead");
+    const tbody = document.querySelector("#detailTable tbody");
+
+    thead.innerHTML = "";
+    tbody.innerHTML = "";
+
+    let totalS = 0, totalA = 0, totalP = 0;
+
+    if (result.length === 0) {
+        thead.innerHTML = "<tr><th>No Data</th></tr>";
+        document.getElementById("detailModal").style.display = "block";
+        return;
+    }
+
+    let headers = Object.keys(result[0]);
+
+    let h = "<tr>";
+    headers.forEach(x => h += `<th>${x}</th>`);
+    h += "</tr>";
+    thead.innerHTML = h;
+
+    result.forEach(r => {
+
+        totalS += r.ShippedQty;
+        totalA += r.ArrivedQty;
+        totalP += r.PendingQty;
+
+        let tr = "<tr>";
+
+        headers.forEach(hd => {
+            if (hd === "PendingQty") {
+                tr += `<td style="color:red;font-weight:bold">${r[hd]}</td>`;
+            } else {
+                tr += `<td>${r[hd]}</td>`;
+            }
         });
 
-        pivotArray.push(row);
+        tr += "</tr>";
+        tbody.innerHTML += tr;
     });
 
-    let ws2 = XLSX.utils.json_to_sheet(pivotArray);
+    // 🔥 DETAIL GRAND TOTAL
+    let totalRow = document.createElement("tr");
+    totalRow.className = "total-row";
 
-    // Workbook
-    let wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws1, "Detailed Report");
-    XLSX.utils.book_append_sheet(wb, ws2, "Pivot Report");
+    totalRow.innerHTML = `
+        <td colspan="4">GRAND TOTAL</td>
+        <td></td>
+        <td>${totalS}</td>
+        <td>${totalA}</td>
+        <td>${totalP}</td>
+    `;
 
-    let now = new Date();
-    let fileName = `Pending_Report_${now.toLocaleDateString()}_${now.toLocaleTimeString().replace(/:/g,'-')}.xlsx`;
+    tbody.appendChild(totalRow);
 
-    XLSX.writeFile(wb, fileName);
+    document.getElementById("detailModal").style.display = "block";
 }
+
+/* DOWNLOAD */
+function downloadDetail() {
+
+    if (!currentDetailData.length) return;
+
+    let ws = XLSX.utils.json_to_sheet(currentDetailData);
+    let wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Detail");
+
+    XLSX.writeFile(wb, "PO_Detail_Report.xlsx");
+}
+
+/* CLOSE */
+function closeModal() {
+    document.getElementById("detailModal").style.display = "none";
+}
+
 </script>
 
 </body>
